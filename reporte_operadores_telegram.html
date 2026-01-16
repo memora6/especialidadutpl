@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Prefectura de Imbabura | SIG-Vial Pro GPS & Telegram</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; display: flex; }
+        #map { height: 100vh; width: 100%; background: #ececec; }
+        .sidebar {
+            position: absolute; top: 15px; left: 15px; z-index: 1000;
+            background: white; padding: 20px; border-radius: 12px;
+            box-shadow: 0 4px 25px rgba(0,0,0,0.3); width: 320px;
+            max-height: 90vh; overflow-y: auto;
+        }
+        .form-section { background: #f4f7f6; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 5px solid #27ae60; }
+        .form-input { width: 100%; padding: 10px; margin-bottom: 8px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; font-size: 13px; }
+        .readonly-input { background: #e9ecef; font-weight: bold; color: #2c3e50; cursor: not-allowed; }
+        
+        /* Panel de Coordenadas en Interfaz */
+        .coord-panel { 
+            background: #2c3e50; color: #ecf0f1; padding: 10px; border-radius: 8px; 
+            margin-bottom: 10px; font-family: 'Courier New', Courier, monospace; font-size: 12px;
+        }
+        .coord-val { color: #2ecc71; font-weight: bold; }
+
+        .btn-obra { width: 100%; padding: 12px; background: #27ae60; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        .btn-gps { width: 100%; padding: 10px; background: #34495e; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 12px; margin-bottom: 10px; }
+        .label-form { font-size: 11px; font-weight: bold; color: #555; display: block; margin-bottom: 3px; }
+        .analisis-item { margin-bottom: 4px; padding: 5px; border-radius: 4px; background: #fdf2e9; border-left: 3px solid #e67e22; font-size: 11px; }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <h2 style="margin:0; font-size: 18px; color: #2c3e50; border-bottom: 3px solid #27ae60; padding-bottom:5px;">Control de Avance Vial</h2>
+        
+        <div class="form-section" style="margin-top:15px;">
+            <label class="label-form">👷 OPERADOR RESPONSABLE</label>
+            <input type="text" id="op_nombre" placeholder="Nombre completo" class="form-input">
+
+            <button class="btn-gps" onclick="obtenerGPS()">📍 Capturar Ubicación GPS</button>
+            
+            <div class="coord-panel">
+                Lat: <span id="disp_lat" class="coord-val">0.00000</span><br>
+                Lng: <span id="disp_lng" class="coord-val">0.00000</span>
+            </div>
+
+            <label class="label-form">🏢 CANTÓN DETECTADO</label>
+            <input type="text" id="op_canton" class="form-input readonly-input" placeholder="Autodetectando..." readonly>
+
+            <label class="label-form">🚜 TIPO DE TRABAJO</label>
+            <select id="op_trabajo" class="form-input">
+                <option value="Lastrado">Lastrado de vía</option>
+                <option value="Cunetas">Limpieza de cunetas</option>
+                <option value="Bacheo">Bacheo asfáltico</option>
+                <option value="Emergencia">Atención de derrumbes</option>
+            </select>
+
+            <label class="label-form">📝 NOVEDADES</label>
+            <textarea id="op_desc" placeholder="Detalles del avance..." class="form-input" style="height:60px;"></textarea>
+
+            <button class="btn-obra" onclick="enviarAvance()">🚀 Guardar y Notificar Telegram</button>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const SB_URL = 'https://hslshwdmcvgdjvhomght.supabase.co';
+        const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhzbHNod2RtY3ZnZGp2aG9tZ2h0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgzNTM3MTMsImV4cCI6MjA4MzkyOTcxM30.0xAy_3p9E3qQmlg2MsZxXgl19g9KRDkph0lEnXDL2TI';
+
+        const map = L.map('map').setView([0.35, -78.12], 11);
+        const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+        let marcador = null, coordsActuales = null;
+
+        const capasConfig = [
+            { tabla: 'cantones', nombre: '🗺️ Cantones', color: '#7f8c8d', campo: 'DPA_DESCAN', visible: true },
+            { tabla: 'calles', nombre: '🚗 Red Vial', color: '#e67e22', campo: 'RED_VIAL', visible: true },
+            { tabla: 'mina', nombre: '🏗️ Minas', color: '#2c3e50', campo: 'material', visible: false },
+            { tabla: 'puentes', nombre: '🌉 Puentes', color: '#3498db', campo: 'nombre', visible: false },
+            { tabla: 'sen_vertical', nombre: '🛑 Señal. Vertical', color: '#9b59b6', campo: 'tipo', visible: false },
+            { tabla: 'sen_horizontal', nombre: '➖ Señal. Horizontal', color: '#f1c40f', campo: 'tipo', visible: false },
+            { tabla: 'avance_obra', nombre: '👷 Avances Prefectura', color: '#27ae60', campo: 'tipo_trabajo', visible: true }
+        ];
+
+        const controlLayers = L.control.layers({"Mapa base": osm}, null, { collapsed: false }).addTo(map);
+
+        // --- TELEGRAM ---
+        async function enviarTelegram(data) {
+            const BOT_TOKEN = '8583030300:AAFAhNGvqEKol76zQBtqboP3rJbbxdCTNqE';
+            const CHAT_ID = '1787292879';
+            const mapsUrl = `https://www.google.com/maps?q=${data.lat_inicio},${data.long_inicio}`;
+            
+            const mensaje = `🚧 *NUEVO REPORTE DE OBRA* 🚧\n` +
+                            `━━━━━━━━━━━━━━━━━━\n` +
+                            `👷 *Operador:* ${data.operador_nombre}\n` +
+                            `🚜 *Trabajo:* ${data.tipo_trabajo}\n` +
+                            `🏢 *Cantón:* ${document.getElementById('op_canton').value}\n` +
+                            `📝 *Novedad:* ${data.descripcion_avance}\n` +
+                            `━━━━━━━━━━━━━━━━━━\n` +
+                            `🌐 *COORDENADAS:*\n` +
+                            `📍 *Lat:* \`${data.lat_inicio}\`\n` +
+                            `📍 *Long:* \`${data.long_inicio}\`\n\n` +
+                            `🔗 [Abrir en Google Maps](${mapsUrl})`;
+
+            try {
+                await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: CHAT_ID, text: mensaje, parse_mode: 'Markdown' })
+                });
+            } catch (e) { console.error("Error Telegram"); }
+        }
+
+        // --- FUNCIONES GPS ---
+        async function detectarCanton(lat, lon) {
+            try {
+                const res = await fetch(`${SB_URL}/rest/v1/rpc/obtener_canton_por_coordenadas`, {
+                    method: 'POST',
+                    headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ lat: parseFloat(lat), lon: parseFloat(lon) })
+                });
+                const canton = await res.json();
+                document.getElementById('op_canton').value = canton || "Fuera de límite";
+            } catch (e) { }
+        }
+
+        function obtenerGPS() {
+            navigator.geolocation.getCurrentPosition(async (pos) => {
+                const { latitude, longitude } = pos.coords;
+                actualizarUbicacion(latitude, longitude);
+            }, null, { enableHighAccuracy: true });
+        }
+
+        map.on('click', async (e) => {
+            actualizarUbicacion(e.latlng.lat, e.latlng.lng);
+        });
+
+        function actualizarUbicacion(lat, lng) {
+            coordsActuales = { lat: lat, lng: lng };
+            
+            // Actualizar visualización en interfaz
+            document.getElementById('disp_lat').innerText = lat.toFixed(6);
+            document.getElementById('disp_lng').innerText = lng.toFixed(6);
+
+            if (marcador) {
+                marcador.setLatLng([lat, lng]);
+            } else {
+                marcador = L.marker([lat, lng], {draggable: true}).addTo(map);
+                marcador.on('dragend', function(e) {
+                    const position = marcador.getLatLng();
+                    actualizarUbicacion(position.lat, position.lng);
+                });
+            }
+            map.flyTo([lat, lng], 15);
+            detectarCanton(lat, lng);
+        }
+
+        // --- CARGA DE CAPAS ---
+        async function cargarCapa(info) {
+            try {
+                const res = await fetch(`${SB_URL}/rest/v1/rpc/get_capa_geojson`, {
+                    method: 'POST',
+                    headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ nombre_tabla: info.tabla })
+                });
+                const geojson = await res.json();
+                const layer = L.geoJSON(geojson, {
+                    style: { color: info.color, weight: 3, opacity: 0.8 },
+                    pointToLayer: (f, ll) => L.circleMarker(ll, { radius: 6, fillColor: info.color, color: "#000", weight: 1, fillOpacity: 1 }),
+                    onEachFeature: (f, l) => {
+                        const nombre = f.properties[info.campo] || "S/N";
+                        l.bindPopup(`<b>${info.nombre}</b><br>${nombre}`);
+
+                        if (info.tabla === 'calles') {
+                            l.on('click', async (e) => {
+                                L.DomEvent.stopPropagation(e);
+                                l.setPopupContent("<i>Analizando entorno...</i>").openPopup();
+                                const r = await fetch(`${SB_URL}/rest/v1/rpc/analizar_entorno_via_resumen`, {
+                                    method: 'POST',
+                                    headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ via_id: f.properties.id })
+                                });
+                                const d = await r.json();
+                                let h = `<div style="font-size:12px; min-width:180px;"><b>Vía: ${nombre}</b><hr style="margin:5px 0;">`;
+                                h += `🏠 <b>Poblados (<250m):</b> ${d.total_poblados}<br>`;
+                                h += `<br>🌉 <b>Puentes:</b> ${d.total_puentes}<br>`;
+                                h += `<br>🏗️ <b>Minas (<30m):</b><br>`;
+                                for (let [m, c] of Object.entries(d.resumen_minas)) h += `<div class="analisis-item">${m}: ${c}</div>`;
+                                h += `<br>🛑 <b>Señalética:</b><br>`;
+                                for (let [s, c] of Object.entries(d.resumen_senales)) h += `<div class="analisis-item">${s}: ${c}</div>`;
+                                l.setPopupContent(h + `</div>`);
+                            });
+                        }
+                    }
+                });
+                controlLayers.addOverlay(layer, info.nombre);
+                if (info.visible) layer.addTo(map);
+            } catch (err) { }
+        }
+
+        async function enviarAvance() {
+            const nom = document.getElementById('op_nombre').value;
+            if (!nom || !coordsActuales) return alert("Ingresa nombre y ubicación");
+
+            const data = {
+                operador_nombre: nom,
+                tipo_trabajo: document.getElementById('op_trabajo').value,
+                descripcion_avance: document.getElementById('op_desc').value,
+                lat_inicio: coordsActuales.lat, long_inicio: coordsActuales.lng
+            };
+
+            const res = await fetch(`${SB_URL}/rest/v1/avance_obra`, {
+                method: 'POST',
+                headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            if (res.ok) {
+                await enviarTelegram(data);
+                alert("✅ Reporte guardado y enviado a Telegram.");
+                location.reload();
+            }
+        }
+
+        capasConfig.forEach(c => cargarCapa(c));
+    </script>
+</body>
+</html>
