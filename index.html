@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Imbabura Digital | SIG-Vial Pro</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <aside class="sidebar">
+        <header class="sidebar-header">
+            <div class="logo">⛰️</div>
+            <div>
+                <h1>Imbabura Digital</h1>
+                <p>Prefectura de Imbabura</p>
+            </div>
+        </header>
+
+        <div class="content-wrapper">
+            <section class="card">
+                <h3>👷 Registro de Avance</h3>
+                <div class="form-group">
+                    <label>Operador Responsable</label>
+                    <input type="text" id="op_nombre" placeholder="Nombre completo">
+                </div>
+
+                <button class="btn btn-gps" onclick="obtenerGPS()">
+                    <span>📍</span> Capturar Ubicación GPS
+                </button>
+                
+                <div class="telemetry-panel">
+                    <div class="coord"><span>LATITUD</span> <b id="disp_lat">0.000000</b></div>
+                    <div class="coord"><span>LONGITUD</span> <b id="disp_lng">0.000000</b></div>
+                </div>
+
+                <div class="form-group">
+                    <label>Cantón Detectado</label>
+                    <input type="text" id="op_canton" class="readonly" placeholder="Esperando GPS..." readonly>
+                </div>
+
+                <div class="form-group">
+                    <label>Tipo de Trabajo</label>
+                    <select id="op_trabajo">
+                        <option value="Lastrado">🚜 Lastrado de vía</option>
+                        <option value="Cunetas">🌊 Limpieza de cunetas</option>
+                        <option value="Bacheo">🛣️ Bacheo asfáltico</option>
+                        <option value="Emergencia">⚠️ Emergencia / Derrumbe</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Novedades en Obra</label>
+                    <textarea id="op_desc" placeholder="Detalles del avance..."></textarea>
+                </div>
+
+                <button class="btn btn-save" onclick="enviarAvance()">
+                    🚀 Guardar y Notificar Telegram
+                </button>
+            </section>
+        </div>
+        
+        <footer>
+            <p>* Toca una vía 🚗 para análisis técnico</p>
+        </footer>
+    </aside>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
